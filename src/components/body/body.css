@@ -1,5 +1,13 @@
 .Body{
   height: 100%;
-  background-color: red;
   width: 100%;
+  display: flex;
+  justify-content: center;
+  margin-top: 20px;
+}
+#content{
+  height: 80vh;
+  width: 50vw;
+  background-color: red;
+
 }
