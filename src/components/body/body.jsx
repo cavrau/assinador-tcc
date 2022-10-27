@@ -1,44 +1,41 @@
-import React, {useCallback, useState}from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import "./body.css"
-import {useDropzone} from 'react-dropzone'
+import { useDropzone } from 'react-dropzone'
 import PdfViewerComponent from '../container/container';
+import assinar from '../misc/misc';
 
 function Body() {
-    const [_file, setFile] = useState(null);
-    const onDrop = useCallback(acceptedFiles => {
-        // Do something with the files
-        console.log(acceptedFiles[0]);
-        acceptedFiles[0].arrayBuffer().then(value => setFile(value))
-      }, [])
-      const {getRootProps, getInputProps, isDragActive} = useDropzone({onDrop})
+  const [_file, setFile] = useState(null);
+  const onDrop = useCallback(acceptedFiles => {
+    // Do something with the files
+    console.log(acceptedFiles[0]);
+    acceptedFiles[0].arrayBuffer().then(value => setFile(value))
+  }, [])
+  const { getRootProps, getInputProps, isDragActive } = useDropzone({ onDrop })
 
-    
-    return (
-        <div {...getRootProps()} className='Body'>
-          <div id="content">
-            <input {...getInputProps()} />
-            {
-              _file ?
-              <div onClick={click => setFile(null)}>
-                <p>Click here to Change File</p>
-              </div> :
-              <div>
-                {
-                  isDragActive?
-                  <p>Drop the files here ...</p> :
-                  <p>Drag 'n' drop some files here, or click to select files</p>
-                }
+  return (
+    <div className='Body'>
+      <div className='box' >
+        {
+          _file ?
+            <div id="content">
+              <PdfViewerComponent document={_file} />
+              <div id='sign'>
+                <button className='button is-warning' onClick={click => setFile(null)}>Remover arquivo</button>
+                <button className='button is-info' onClick={click => assinar(_file)}>Assinar</button>
               </div>
-            }
-            <div id="pdf-container">
+            </div> :
+            <div  {...getRootProps()} id="empty-content">
+              <input {...getInputProps()} />
               {
-                _file ?
-                <PdfViewerComponent document={ _file} /> :
-                <div></div>
+                isDragActive ?
+                  <div /> :
+                  <p id="texto"><strong>Clique aqui ou arraste arquivos para carregar</strong></p>
               }
             </div>
-          </div>
-        </div>
+        }
+      </div>
+    </div>
   )
 }
 
