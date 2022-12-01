@@ -1,13 +1,31 @@
 import * as pkijs from 'pkijs'
 
 import * as asn1js from 'asn1js'
+// import forge from 'node-forge'
+import {sign, addPlaceholder} from "./sign"
+// import { plainAddPlaceholder} from 'node-signpdf'
 import axios from 'axios';
+var forge = require('node-forge');
+console.log(forge.pkcs7)
+async function hash(bytes){
+  console.log(
+    window.btoa(String.fromCharCode(...new Uint8Array(await window.crypto.subtle.digest("SHA-256",bytes))))
 
+  )
+}
 async function assinar(pdf_instance, filename) {
-
+  let pdf_bytes = await pdf_instance.exportPDF()
+  hash(pdf_bytes)
+  pdf_bytes = new Buffer(pdf_bytes)
+  console.log(pdf_bytes.buffer)
+  pdf_bytes = await addPlaceholder(
+    pdf_bytes
+);
   const keys = await window.crypto.subtle.generateKey({
-    name: "ECDSA",
-    namedCurve: "P-384"
+    name: "RSASSA-PKCS1-v1_5",
+    hash: "SHA-384",
+    modulusLength: 4096,
+    publicExponent: new Uint8Array([0x01, 0x00, 0x01])
   },
     true,
     ["sign", "verify"]
@@ -23,88 +41,73 @@ async function assinar(pdf_instance, filename) {
 
   pkcs10.attributes = [];
 
-  await pdf_instance.signDocument({ placeholderSize: 22234 }, ({ hash, fileContents }) => {
-    return new Promise(async (resolve, reject) => {
-      let crypto_digest = await window.crypto.subtle.digest("SHA-384", fileContents)
+  // await pdf_instance.signDocument({ placeholderSize: 22234 }, ({ hash, fileContents }) => {
+  //   return new Promise(async (resolve, reject) => {
+    console.log(pdf_bytes)
+  let crypto_digest = await window.crypto.subtle.digest("SHA-384",pdf_bytes)
+  hash(pdf_bytes)
+  console.log(window.btoa(String.fromCharCode(...new Uint8Array(crypto_digest))))
+  pkcs10.attributes.push(new pkijs.Attribute({
+    type: "1.2.840.113549.1.9.14", // pkcs-9-at-extensionRequest
+    values: [(new pkijs.Extensions({
+      extensions: [
+        new pkijs.Extension({
+          extnID: "2.16.508.1.1.1.1", // id-ce-subjectAltName
+          critical: false,
+          extnValue: (new asn1js.Utf8String({ value: window.btoa(String.fromCharCode(...new Uint8Array(crypto_digest))) })).toBER(false)
+        }),
+      ]
+    })).toSchema()]
+  }));
+  // Signing final PKCS#10 request
+  await pkcs10.sign(keys.privateKey, "SHA-384");
 
-      console.log(window.btoa(String.fromCharCode(...new Uint8Array(crypto_digest))))
-      pkcs10.attributes.push(new pkijs.Attribute({
-        type: "1.2.840.113549.1.9.14", // pkcs-9-at-extensionRequest
-        values: [(new pkijs.Extensions({
-          extensions: [
-            new pkijs.Extension({
-              extnID: "2.16.508.1.1.1.1", // id-ce-subjectAltName
-              critical: false,
-              extnValue: (new asn1js.Utf8String({ value: window.btoa(String.fromCharCode(...new Uint8Array(crypto_digest))) })).toBER(false)
-            }),
-          ]
-        })).toSchema()]
-      }));
-      // Signing final PKCS#10 request
-      await pkcs10.sign(keys.privateKey, "SHA-384");
-
-      const pkcs10Raw = pkcs10.toSchema(true).toBER();
-      const csr_contents = window.btoa(String.fromCharCode(...new Uint8Array(pkcs10Raw)));
-      const csr_file = `
+  const pkcs10Raw = pkcs10.toSchema(true).toBER();
+  const csr_contents = window.btoa(String.fromCharCode(...new Uint8Array(pkcs10Raw)));
+  const csr_file = `
 -----BEGIN CERTIFICATE REQUEST-----
 ${csr_contents}
 -----END CERTIFICATE REQUEST-----
        `
-      const csr = new File([csr_file], "test.csr")
-      const form = new FormData();
-      // Pass file stream directly to form
-      form.append('csr', csr, 'file.pdf');
-      const res = await axios.post(
-        "http://kubernetes.docker.internal:5004/pki/p7b/sign",
-        form,
-        {
-          headers: {
-            //   ...form.getHeaders(),
-            // Authentication: 'Bearer token',
-            "Access-Control-Allow-Origin": "*"
-          },
-        }
-      )
-      // Load certificate in PEM encoding (base64 encoded DER)
-      const pem = res.data
-      const b64 = pem.replace(/(-----(BEGIN|END) PKCS7-----|[\n\r])/g, '')
-      // Now that we have decoded the cert it's now in DER-encoding
-      const der = Buffer(b64, 'base64')
+  const csr = new File([csr_file], "test.csr")
+  const form = new FormData();
+  // Pass file stream directly to form
+  form.append('csr', csr, 'file.pdf');
+  const res = await axios.post(
+    "http://kubernetes.docker.internal:5004/pki/p7b/sign",
+    form,
+    {
+      headers: {
+        //   ...form.getHeaders(),
+        // Authentication: 'Bearer token',
+        "Access-Control-Allow-Origin": "*"
+      },
+    }
+  )
+  // Load certificate in PEM encoding (base64 encoded DER)
+  const pem = res.data
+  console.log(pem)
+  const b64 = pem.replace(/(-----(BEGIN|END) PKCS7-----|[\n\r])/g, '')
+  const pkcs7 = forge.pkcs7.messageFromPem(pem)
+  console.log(keys.privateKey)
+  const exported = await window.crypto.subtle.exportKey("pkcs8", keys.privateKey)
+  const exportedAsString = ab2str(exported);
+  const exportedAsBase64 = window.btoa(exportedAsString);
+  const pemExported = `-----BEGIN PRIVATE KEY-----\n${exportedAsBase64}\n-----END PRIVATE KEY-----`;
+  const privateKey = forge.pki.privateKeyFromPem(pemExported);
+  console.log(privateKey, pkcs7.certificates)
+  const p12Asn1 = forge.pkcs12.toPkcs12Asn1(privateKey, pkcs7.certificates, '');
 
-      // // And massage the cert into a BER encoded one
-      const ber = new Uint8Array(der).buffer
-      // console.log(ber)
-
-      // // And now Asn1js can decode things \o/
-      // const asn1 = asn1js.fromBER(ber);
-      // console.log(asn1.result)
-      // // if (asn1.offset === -1) {
-      // //   throw new Error("Incorrect encoded ASN.1 data");
-      // // }
-
-      // const info = new pkijs.ContentInfo({ schema: asn1.result });
-      // const data = new pkijs.SignedData({ schema: info.content });
-      // // console.log(res.data)
-      // console.log(info)
-      // console.log(data)
-      // reject()
-      resolve(stringToArrayBuffer(ber))
-      // const PKCS7Container = getPKCS7Container(hash, fileContents);
-      // if (PKCS7Container != null) {
-      //   return resolve(PKCS7Container)
-      // }
-      // reject(new Error("Could not retrieve the PKCS7 container."))
-    })
-  }).then( function () {
-    console.log("Document signed!");
-  })
-  console.log("HEEREEE")
-  let b = await window.crypto.subtle.digest("SHA-384", await pdf_instance.exportPDF())
-  console.log(window.btoa(String.fromCharCode(...new Uint8Array(b))))
-
+  // var pkcs12Asn1 = forge.asn1.fromDer(pkcs12Der);
+  var pkcs12 = forge.pkcs12.pkcs12FromAsn1(p12Asn1, false, "");
+  pdf_bytes = sign(
+    pdf_bytes,
+    pkcs12,
+  );
+  hash(pdf_bytes)
   const link = document.createElement('a');
   const new_filename = filename.replace(".pdf", "assinado.pdf")
-  const blob = new Blob([await pdf_instance.exportPDF()]);
+  const blob = new Blob([pdf_bytes]);
   // Browsers that support HTML5 download attribute
   if (link.download !== undefined) {
     const url = URL.createObjectURL(blob);
@@ -116,19 +119,6 @@ ${csr_contents}
     document.body.removeChild(link);
   }
 
-  // const signer = new SignPdf()
-  // const signedPdf = signer.sign(a, Buffer.from(res.data), { passphrase: 'pass:' });
-  // const bufferPdf = Buffer.from(signedPdf)
-  // var msg = crypto.createHash("sha256").update(_file).digest();
-
-  // eccrypto.sign(privateKey, msg).then(function(sig) {
-  //   console.log("Signature in DER format:", sig);
-  //   eccrypto.verify(publicKey, msg, sig).then(function() {
-  //     console.log("Signature is OK");
-  //   }).catch(function() {
-  //     console.log("Signature is BAD");
-  //   });
-  // });
 }
 // function Misc() {
 //   // var privateKeyB = eccrypto.generatePrivate();
@@ -177,6 +167,9 @@ function stringToArrayBuffer(binaryString) {
 export default assinar;
 
 
+function ab2str(buf) {
+  return String.fromCharCode.apply(null, new Uint8Array(buf));
+}
 
 ///////
 // Talvez a assinatura do pdf em si tenha que ser feita em um microserviço que use o pyhanko

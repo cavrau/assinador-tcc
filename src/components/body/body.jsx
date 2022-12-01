@@ -10,6 +10,7 @@ function Body() {
   const onDrop = useCallback(acceptedFiles => {
     // Do something with the files
     setFilename(acceptedFiles[0].name)
+    console.log(acceptedFiles)
     acceptedFiles[0].arrayBuffer().then(value => setFile(value))
     
   }, [])
