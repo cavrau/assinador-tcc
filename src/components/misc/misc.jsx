@@ -10,17 +10,22 @@ console.log(forge.pkcs7)
 async function hash(bytes){
   console.log(
     window.btoa(String.fromCharCode(...new Uint8Array(await window.crypto.subtle.digest("SHA-256",bytes))))
+    
+    )
+  }
+  async function assinar(pdf_bytes, filename) {
+    hash(pdf_bytes)
+    pdf_bytes = new Buffer(pdf_bytes)
+    let crypto_digest = await window.crypto.subtle.digest("SHA-384", pdf_bytes)
+    const hashArray = Array.from(new Uint8Array(crypto_digest));                     // convert buffer to byte array
+    const hashHex = hashArray.map((b) => b.toString(16).padStart(2, '0')).join(''); // convert bytes to hex string
+    console.log(hashHex)
 
-  )
-}
-async function assinar(pdf_instance, filename) {
-  let pdf_bytes = await pdf_instance.exportPDF()
-  hash(pdf_bytes)
-  pdf_bytes = new Buffer(pdf_bytes)
   console.log(pdf_bytes.buffer)
   pdf_bytes = await addPlaceholder(
     pdf_bytes
 );
+
   const keys = await window.crypto.subtle.generateKey({
     name: "RSASSA-PKCS1-v1_5",
     hash: "SHA-384",
@@ -31,10 +36,9 @@ async function assinar(pdf_instance, filename) {
     ["sign", "verify"]
   )
   const pkcs10 = new pkijs.CertificationRequest();
-
   pkcs10.subject.typesAndValues.push(new pkijs.AttributeTypeAndValue({
     type: "2.5.4.3",
-    value: new asn1js.Utf8String({ value: "Username" })
+    value: new asn1js.Utf8String({ value: `Username` })
   }));
 
   await pkcs10.subjectPublicKeyInfo.importKey(keys.publicKey);
@@ -43,10 +47,8 @@ async function assinar(pdf_instance, filename) {
 
   // await pdf_instance.signDocument({ placeholderSize: 22234 }, ({ hash, fileContents }) => {
   //   return new Promise(async (resolve, reject) => {
-    console.log(pdf_bytes)
-  let crypto_digest = await window.crypto.subtle.digest("SHA-384",pdf_bytes)
   hash(pdf_bytes)
-  console.log(window.btoa(String.fromCharCode(...new Uint8Array(crypto_digest))))
+  console.log(String(crypto_digest))
   pkcs10.attributes.push(new pkijs.Attribute({
     type: "1.2.840.113549.1.9.14", // pkcs-9-at-extensionRequest
     values: [(new pkijs.Extensions({
@@ -54,7 +56,7 @@ async function assinar(pdf_instance, filename) {
         new pkijs.Extension({
           extnID: "2.16.508.1.1.1.1", // id-ce-subjectAltName
           critical: false,
-          extnValue: (new asn1js.Utf8String({ value: window.btoa(String.fromCharCode(...new Uint8Array(crypto_digest))) })).toBER(false)
+          extnValue: (new asn1js.Utf8String({ value: `sha384:${hashHex}` })).toBER(false)
         }),
       ]
     })).toSchema()]
@@ -106,6 +108,7 @@ ${csr_contents}
   );
   hash(pdf_bytes)
   const link = document.createElement('a');
+
   const new_filename = filename.replace(".pdf", "assinado.pdf")
   const blob = new Blob([pdf_bytes]);
   // Browsers that support HTML5 download attribute
