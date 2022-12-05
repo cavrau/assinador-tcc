@@ -78,17 +78,58 @@ const removeTrailingNewLine = (pdf) => {
 };
 
 
+async function calculate_content_bytes(pdfBuffer){
+    
+    let pdf = removeTrailingNewLine(pdfBuffer);
+
+    // Find the ByteRange placeholder.
+    const {byteRangePlaceholder} = findByteRange(pdf);
+
+    if (!byteRangePlaceholder) {
+        throw new SignPdfError(
+            `Could not find empty ByteRange placeholder: ${byteRangePlaceholder}`,
+            SignPdfError.TYPE_PARSE,
+        );
+    }
+
+    const byteRangePos = pdf.indexOf(byteRangePlaceholder);
+
+    // Calculate the actual ByteRange that needs to replace the placeholder.
+    const byteRangeEnd = byteRangePos + byteRangePlaceholder.length;
+    const contentsTagPos = pdf.indexOf('/Contents ', byteRangeEnd);
+    const placeholderPos = pdf.indexOf('<', contentsTagPos);
+    const placeholderEnd = pdf.indexOf('>', placeholderPos);
+    const placeholderLengthWithBrackets = (placeholderEnd + 1) - placeholderPos;
+    const byteRange = [0, 0, 0, 0];
+    byteRange[1] = placeholderPos;
+    byteRange[2] = byteRange[1] + placeholderLengthWithBrackets;
+    byteRange[3] = pdf.length - byteRange[2];
+    let actualByteRange = `/ByteRange [${byteRange.join(' ')}]`;
+    actualByteRange += ' '.repeat(byteRangePlaceholder.length - actualByteRange.length);
+    // Replace the /ByteRange placeholder with the actual ByteRange
+    pdf = Buffer.concat([
+        pdf.slice(0, byteRangePos),
+        Buffer.from(actualByteRange),
+        pdf.slice(byteRangeEnd),
+    ]);
+
+    // Remove the placeholder signature
+    pdf = Buffer.concat([
+        pdf.slice(0, byteRange[1]),
+        pdf.slice(byteRange[2], byteRange[2] + byteRange[3]),
+    ]);
+    let crypto_digest = await window.crypto.subtle.digest("SHA-384", pdf)
+    const hashArray = Array.from(new Uint8Array(crypto_digest));                     // convert buffer to byte array
+    const hashHex = hashArray.map((b) => b.toString(16).padStart(2, '0')).join(''); // convert bytes to hex string
+    return hashHex
+}
+
 
 function sign(
     pdfBuffer,
     p12Object,
     additionalOptions = {},
 ) {
-    const options = {
-        asn1StrictParsing: false,
-        passphrase: '',
-        ...additionalOptions,
-    };
 
     if (!(pdfBuffer instanceof Buffer)) {
         throw new SignPdfError(
@@ -302,4 +343,4 @@ function sign(
     return unit8ToBuffer(pdfBytes);
   }
 
-export {sign, addPlaceholder};
+export {sign, addPlaceholder, calculate_content_bytes};
