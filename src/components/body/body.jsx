@@ -16,14 +16,15 @@ function Body() {
   }, [])
   const { getRootProps, getInputProps, isDragActive } = useDropzone({ onDrop })
 
-  const containerRef = useRef(null);
+  const handleClick = click => {
+    click.currentTarget.disabled=true
+    assinar(_file, filename)
+  }
   useEffect(() => {
-    console.log(_file)
     if (_file) {
       console.log(typeof(_file))
       var url = URL.createObjectURL( new Blob([_file], {type: 'application/pdf'}));
       setPDFUrl(url)
-      console.log(url)
     }      
 
   }, [_file])
@@ -37,7 +38,7 @@ function Body() {
               <iframe width="100%" height="80%" src={pdf_url} /> 
               <div id='sign'>
                 <button className='button is-warning' onClick={click => setFile(null)}>Remover arquivo</button>
-                <button className='button is-info' onClick={click => assinar(_file, filename)}>Assinar</button>
+                <button className='button is-info' onClick={handleClick}>Assinar</button>
               </div>
             </div> :
             <div  {...getRootProps()} id="empty-content">
