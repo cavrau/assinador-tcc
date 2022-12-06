@@ -21,6 +21,7 @@ function Body() {
     assinar(_file, filename)
   }
   useEffect(() => {
+
     if (_file) {
       console.log(typeof(_file))
       var url = URL.createObjectURL( new Blob([_file], {type: 'application/pdf'}));

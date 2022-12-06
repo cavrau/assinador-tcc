@@ -327,14 +327,18 @@ function sign(
 
     // Add signature widget to the first page
     pages[0].node.set(PDFName.of('Annots'), loadedPdf.context.obj([widgetDictRef]));
+    if(loadedPdf.catalog.getAcroForm()){
+        loadedPdf.catalog.getAcroForm().addField(widgetDictRef)
+    }else{
+        loadedPdf.catalog.set(
+          PDFName.of('AcroForm'),
+          loadedPdf.context.obj({
+            SigFlags: 3,
+            Fields: [widgetDictRef],
+          })
+        );
 
-    loadedPdf.catalog.set(
-      PDFName.of('AcroForm'),
-      loadedPdf.context.obj({
-        SigFlags: 3,
-        Fields: [widgetDictRef],
-      })
-    );
+    }
 
     // Allows signatures on newer PDFs
     // @see https://github.com/Hopding/pdf-lib/issues/541
