@@ -7,10 +7,13 @@ var forge = require('node-forge');
 
 async function assinar(pdf_bytes, filename) {
     pdf_bytes = new Buffer(pdf_bytes)
+    // Cria objeto de assinatura dentro do PDF com uma assinatura placeholder
     pdf_bytes = await addPlaceholder(
         pdf_bytes
     );
+    // Calcula o hash do documento pegando os bytes em volta da assinatura
     const hash_value = await calculate_content_bytes(pdf_bytes)
+    // Gera par de chaves
     const keys = await window.crypto.subtle.generateKey({
         name: "RSASSA-PKCS1-v1_5",
         hash: "SHA-384",
@@ -20,16 +23,18 @@ async function assinar(pdf_bytes, filename) {
         true,
         ["sign", "verify"]
     )
+    // cria um CSR
     const pkcs10 = new pkijs.CertificationRequest();
+    // insere nome no CSR
     pkcs10.subject.typesAndValues.push(new pkijs.AttributeTypeAndValue({
         type: "2.5.4.3",
         value: new asn1js.Utf8String({ value: `Username` })
     }));
-
+    // Importa a chave publica no csr
     await pkcs10.subjectPublicKeyInfo.importKey(keys.publicKey);
 
     pkcs10.attributes = [];
-
+    // bota atributo do OTS no CSR
     pkcs10.attributes.push(new pkijs.Attribute({
         type: "1.2.840.113549.1.9.14", // pkcs-9-at-extensionRequest
         values: [(new pkijs.Extensions({
@@ -42,9 +47,10 @@ async function assinar(pdf_bytes, filename) {
             ]
         })).toSchema()]
     }));
-    // Signing final PKCS#10 request
-    await pkcs10.sign(keys.privateKey, "SHA-384");
 
+    // Assina o CSR com a chave privada
+    await pkcs10.sign(keys.privateKey, "SHA-384");
+    // Converte o CSR para b64 e coloca dentro de um arquivo
     const pkcs10Raw = pkcs10.toSchema(true).toBER();
     const csr_contents = window.btoa(String.fromCharCode(...new Uint8Array(pkcs10Raw)));
     const csr_file = `
@@ -54,8 +60,8 @@ ${csr_contents}
        `
     const csr = new File([csr_file], "test.csr")
     const form = new FormData();
-    // Pass file stream directly to form
     form.append('csr', csr, 'file.pdf');
+    // envia o CSR e recebe um PKCS7
     const res = await axios.post(
         "http://kubernetes.docker.internal:5004/pki/p7b/sign",
         form,
@@ -67,22 +73,26 @@ ${csr_contents}
             },
         }
     )
-    // Load certificate in PEM encoding (base64 encoded DER)
+    // Lê PKCS7
     const pkcs7 = forge.pkcs7.messageFromPem(res.data)
+    // exporta a chave privada gerada no começo para pkcs8 e bota ela num arquivo
     const exported = await window.crypto.subtle.exportKey("pkcs8", keys.privateKey)
     const exportedAsString = ab2str(exported);
     const exportedAsBase64 = window.btoa(exportedAsString);
     const pemExported = `-----BEGIN PRIVATE KEY-----\n${exportedAsBase64}\n-----END PRIVATE KEY-----`;
+    // lê chave privada de um arquivo
     const privateKey = forge.pki.privateKeyFromPem(pemExported);
+    // Cria um pkcs12 com a chave privada e os certificados do pkcs7 recebido
     const p12Asn1 = forge.pkcs12.toPkcs12Asn1(privateKey, pkcs7.certificates, '');
 
-    // var pkcs12Asn1 = forge.asn1.fromDer(pkcs12Der);
+    // Lê pkcs12
     var pkcs12 = forge.pkcs12.pkcs12FromAsn1(p12Asn1, false, "");
+    // Assina o PDF
     pdf_bytes = sign(
         pdf_bytes,
         pkcs12,
     );
-
+    // faz o download do pdf
     const link = document.createElement('a');
     const new_filename = filename.replace(".pdf", "assinado.pdf")
     const blob = new Blob([pdf_bytes]);

@@ -137,10 +137,10 @@ function sign(
             SignPdfError.TYPE_INPUT,
         );
     }
-
+    // remove \n no final do arquivo caso exista
     let pdf = removeTrailingNewLine(pdfBuffer);
 
-    // Find the ByteRange placeholder.
+    // Acha o byte range da assinatura placeholder
     const {byteRangePlaceholder} = findByteRange(pdf);
 
     if (!byteRangePlaceholder) {
@@ -149,41 +149,50 @@ function sign(
             SignPdfError.TYPE_PARSE,
         );
     }
-
+    // pega a posição do placeholder nos bytes
     const byteRangePos = pdf.indexOf(byteRangePlaceholder);
 
-    // Calculate the actual ByteRange that needs to replace the placeholder.
+    // Calcula o ByteRange que vai atualizar o placeholder
     const byteRangeEnd = byteRangePos + byteRangePlaceholder.length;
+    // Acha o indice da flag de conteúdo da assinatura
     const contentsTagPos = pdf.indexOf('/Contents ', byteRangeEnd);
+    // inicio do placeholder "sempre tem esse <"
     const placeholderPos = pdf.indexOf('<', contentsTagPos);
+    // fim do placeholder
     const placeholderEnd = pdf.indexOf('>', placeholderPos);
+    // tamanho com < e >
     const placeholderLengthWithBrackets = (placeholderEnd + 1) - placeholderPos;
+    // tamanho sem <>
     const placeholderLength = placeholderLengthWithBrackets - 2;
+    // atualiza o byte range da assinatura
     const byteRange = [0, 0, 0, 0];
+    // 0 - começo da assinatura
     byteRange[1] = placeholderPos;
+    // depois da assinatura
     byteRange[2] = byteRange[1] + placeholderLengthWithBrackets;
+    // até o fim do pdf
     byteRange[3] = pdf.length - byteRange[2];
+    // bota em uma string
     let actualByteRange = `/ByteRange [${byteRange.join(' ')}]`;
     actualByteRange += ' '.repeat(byteRangePlaceholder.length - actualByteRange.length);
 
-    // Replace the /ByteRange placeholder with the actual ByteRange
+    // Troca o byte Range com **** que esta no documento pelo novo
     pdf = Buffer.concat([
         pdf.slice(0, byteRangePos),
         Buffer.from(actualByteRange),
         pdf.slice(byteRangeEnd),
     ]);
 
-    // Remove the placeholder signature
+    // Remove o conteúdo da assinatura 
     pdf = Buffer.concat([
         pdf.slice(0, byteRange[1]),
         pdf.slice(byteRange[2], byteRange[2] + byteRange[3]),
     ]);
 
-    // Convert Buffer P12 to a forge implementation.
+    // Carrega pkcs12
     const p12 = p12Object
 
-    // Extract safe bags by type.
-    // We will need all the certificates and the private key.
+    // extrai bolsas de certificado e de chaves
     const certBags = p12.getBags({
         bagType: forge.pki.oids.certBag,
     })[forge.pki.oids.certBag];
@@ -191,15 +200,14 @@ function sign(
         bagType: forge.pki.oids.pkcs8ShroudedKeyBag,
     })[forge.pki.oids.pkcs8ShroudedKeyBag];
 
+    // pega chave privada do certificado
     const privateKey = keyBags[0].key;
-    // Here comes the actual PKCS#7 signing.
+    // Cria pkcs7.
     const p7 = forge.pkcs7.createSignedData();
-    // Start off by setting the content.
+    // coloca o conteúdo como sendo os bytes do pdf.
     p7.content = forge.util.createBuffer(pdf.toString('binary'));
 
-    // Then add all the certificates (-cacerts & -clcerts)
-    // Keep track of the last found client certificate.
-    // This will be the public key that will be bundled in the signature.
+    // Adiciona certificados e chaves públicas ao pkcs7
     let certificate;
     Object.keys(certBags).forEach((i) => {
         const {publicKey} = certBags[i].cert;
@@ -222,7 +230,7 @@ function sign(
     }
     let timestamp = new Date()
     timestamp.setSeconds(timestamp.getSeconds() + 1)
-    // Add a sha256 signer. That's what Adobe.PPKLite adbe.pkcs7.detached expects.
+    // Adiciona o assinador
     p7.addSigner({
         key: privateKey,
         certificate,
@@ -233,14 +241,11 @@ function sign(
                 value: forge.pki.oids.data,
             }, {
                 type: forge.pki.oids.signingTime,
-                // value can also be auto-populated at signing time
-                // We may also support passing this as an option to sign().
-                // Would be useful to match the creation time of the document for example.
                 value: timestamp,
             },
             {
                 type: forge.pki.oids.digestedData,
-                // value will be auto-populated at signing time
+                // este acaba vindo vazio mas como o assinador espera o hash na chave 3 tive que colocar
             },
             {
                 type: forge.pki.oids.messageDigest
@@ -248,35 +253,32 @@ function sign(
         ],
     });
 
-    // Sign in detached mode.
+    // Asssina em modo detached
     p7.sign({detached: true});
 
-    // Check if the PDF has a good enough placeholder to fit the signature.
+    // converta assinatura pra bytes e checa se o pdf tem um placeholder caiba a assinatura
     const raw = forge.asn1.toDer(p7.toAsn1()).getBytes();
-    // placeholderLength represents the length of the HEXified symbols but we're
-    // checking the actual lengths.
     if ((raw.length * 2) > placeholderLength) {
         throw new SignPdfError(
             `Signature exceeds placeholder length: ${raw.length * 2} > ${placeholderLength}`,
             SignPdfError.TYPE_INPUT,
         );
     }
-
+    // converte assinatura pra hex
     let signature = Buffer.from(raw, 'binary').toString('hex');
 
-    // Pad the signature with zeroes so the it is the same length as the placeholder
+    // Adiciona 0 ao final da assinatura dela caso seja menor que o placeholder
     signature += Buffer
         .from(String.fromCharCode(0).repeat((placeholderLength / 2) - raw.length))
         .toString('hex');
 
-    // Place it in the document.
+    // Coloca ela no documento
     pdf = Buffer.concat([
         pdf.slice(0, byteRange[1]),
         Buffer.from(`<${signature}>`),
         pdf.slice(byteRange[1]),
     ]);
 
-    // Magic. Done.
     return pdf;
   }
   function unit8ToBuffer(unit8) {
@@ -299,7 +301,8 @@ function sign(
     ByteRange.push(PDFName.of(DEFAULT_BYTE_RANGE_PLACEHOLDER));
     ByteRange.push(PDFName.of(DEFAULT_BYTE_RANGE_PLACEHOLDER));
     ByteRange.push(PDFName.of(DEFAULT_BYTE_RANGE_PLACEHOLDER));
-
+    // O Byte Range agora é este array [0, **********, **********, **********]
+    // Inserimos um objeto de assinatura com o conteúdo sendo o SIGNATURE_LENGHT de AAAAAAAAAAAAAA
     const signatureDict = loadedPdf.context.obj({
       Type: 'Sig',
       Filter: 'Adobe.PPKLite',
@@ -311,7 +314,7 @@ function sign(
     });
 
     const signatureDictRef = loadedPdf.context.register(signatureDict);
-
+    // adiciona widget de referenciação a assinatura
     const widgetDict = loadedPdf.context.obj({
       Type: 'Annot',
       Subtype: 'Widget',
@@ -325,8 +328,9 @@ function sign(
 
     const widgetDictRef = loadedPdf.context.register(widgetDict);
 
-    // Add signature widget to the first page
+    // Adiciona assinatura a primeira página
     pages[0].node.set(PDFName.of('Annots'), loadedPdf.context.obj([widgetDictRef]));
+    // Adiciona o campo de assinatura ao AcroForm do PDF Criando ele caso ele não exista
     if(loadedPdf.catalog.getAcroForm()){
         loadedPdf.catalog.getAcroForm().addField(widgetDictRef)
     }else{
@@ -340,7 +344,7 @@ function sign(
 
     }
 
-    // Allows signatures on newer PDFs
+    // Salva o pdf e retorna o buffer
     // @see https://github.com/Hopding/pdf-lib/issues/541
     const pdfBytes = await loadedPdf.save({ useObjectStreams: false });
 
