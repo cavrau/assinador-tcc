@@ -6,6 +6,7 @@ import axios from 'axios';
 var forge = require('node-forge');
 
 async function assinar(pdf_bytes, filename) {
+    // var startTime = performance.now()
     pdf_bytes = new Buffer(pdf_bytes)
     // Cria objeto de assinatura dentro do PDF com uma assinatura placeholder
     pdf_bytes = await addPlaceholder(
@@ -53,11 +54,7 @@ async function assinar(pdf_bytes, filename) {
     // Converte o CSR para b64 e coloca dentro de um arquivo
     const pkcs10Raw = pkcs10.toSchema(true).toBER();
     const csr_contents = window.btoa(String.fromCharCode(...new Uint8Array(pkcs10Raw)));
-    const csr_file = `
------BEGIN CERTIFICATE REQUEST-----
-${csr_contents}
------END CERTIFICATE REQUEST-----
-       `
+    const csr_file = `-----BEGIN CERTIFICATE REQUEST-----\n${csr_contents}\n-----END CERTIFICATE REQUEST-----`
     const csr = new File([csr_file], "test.csr")
     const form = new FormData();
     form.append('csr', csr, 'file.pdf');
@@ -106,6 +103,7 @@ ${csr_contents}
         link.click();
         document.body.removeChild(link);
     }
+    // var endTime = performance.now()x)
 
 }
 export default assinar;
