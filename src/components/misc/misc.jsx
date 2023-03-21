@@ -1,7 +1,7 @@
 import * as pkijs from 'pkijs'
 
 import * as asn1js from 'asn1js'
-import { sign, addPlaceholder, calculate_content_bytes } from "./sign"
+import { sign, calculate_content_bytes, addPlaceholder } from "./sign"
 import axios from 'axios';
 var forge = require('node-forge');
 

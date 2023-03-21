@@ -4,6 +4,7 @@ import {
     PDFNumber,
     PDFHexString,
     PDFString,
+    PDFRef
   } from "pdf-lib";
 import PDFArrayCustom from "./pdfArrayCustom";
 class SignPdfError extends Error{}
@@ -139,6 +140,7 @@ function sign(
     }
     // remove \n no final do arquivo caso exista
     let pdf = removeTrailingNewLine(pdfBuffer);
+    console.log(pdf.length)
 
     // Acha o byte range da assinatura placeholder
     const {byteRangePlaceholder} = findByteRange(pdf);
@@ -278,6 +280,7 @@ function sign(
         Buffer.from(`<${signature}>`),
         pdf.slice(byteRange[1]),
     ]);
+    console.log(pdf)
 
     return pdf;
   }
@@ -289,66 +292,127 @@ function sign(
       buf[i] = view[i];
     }
     return buf;
-  }
-  async function addPlaceholder(pdf_doc) {
+}
+async function addPlaceholder(pdf_doc) {
+    const before = pdf_doc.length
     const loadedPdf = await PDFDocument.load(pdf_doc);
-    const ByteRange = PDFArrayCustom.withContext(loadedPdf.context);
-    const DEFAULT_BYTE_RANGE_PLACEHOLDER = '**********';
-    const SIGNATURE_LENGTH = 15000;
-    const pages = loadedPdf.getPages();
-
-    ByteRange.push(PDFNumber.of(0));
-    ByteRange.push(PDFName.of(DEFAULT_BYTE_RANGE_PLACEHOLDER));
-    ByteRange.push(PDFName.of(DEFAULT_BYTE_RANGE_PLACEHOLDER));
-    ByteRange.push(PDFName.of(DEFAULT_BYTE_RANGE_PLACEHOLDER));
-    // O Byte Range agora é este array [0, **********, **********, **********]
-    // Inserimos um objeto de assinatura com o conteúdo sendo o SIGNATURE_LENGHT de AAAAAAAAAAAAAA
-    const signatureDict = loadedPdf.context.obj({
-      Type: 'Sig',
-      Filter: 'Adobe.PPKLite',
-      SubFilter: 'adbe.pkcs7.detached',
-      ByteRange,
-      Contents: PDFHexString.of('A'.repeat(SIGNATURE_LENGTH)),
-      Reason: PDFString.of('We need your signature for reasons...'),
-      M: PDFString.fromDate(new Date()),
-    });
-
-    const signatureDictRef = loadedPdf.context.register(signatureDict);
-    // adiciona widget de referenciação a assinatura
-    const widgetDict = loadedPdf.context.obj({
-      Type: 'Annot',
-      Subtype: 'Widget',
-      FT: 'Sig',
-      Rect: [0, 0, 0, 0], // Signature rect size
-      V: signatureDictRef,
-      T: PDFString.of('test signature'),
-      F: 4,
-      P: pages[0].ref,
-    });
-
-    const widgetDictRef = loadedPdf.context.register(widgetDict);
-
-    // Adiciona assinatura a primeira página
-    pages[0].node.set(PDFName.of('Annots'), loadedPdf.context.obj([widgetDictRef]));
-    // Adiciona o campo de assinatura ao AcroForm do PDF Criando ele caso ele não exista
-    if(loadedPdf.catalog.getAcroForm()){
-        loadedPdf.catalog.getAcroForm().addField(widgetDictRef)
-    }else{
-        loadedPdf.catalog.set(
-          PDFName.of('AcroForm'),
-          loadedPdf.context.obj({
-            SigFlags: 3,
-            Fields: [widgetDictRef],
-          })
-        );
-
+    const lastIdx = loadedPdf.context.largestObjectNumber
+    const form = loadedPdf.getForm()
+    let form_exists = false
+    if (form.acroForm.getAllFields().length > 0){
+        form_exists = true
+    }else {
+        form_exists = false
     }
+    const pdf_doc_string = pdf_doc.toString("ascii")
+    let catalogMatches = [...pdf_doc_string.matchAll(/\d* 0 obj\n<<\n?\/Type \/Catalog/g)]
+    catalogMatches = catalogMatches.map(match => match.index)
+    const catalogidx = Math.max(...catalogMatches)
+    // const catalogidx = pdf_doc_string.search(/\d* 0 obj\n<<\n?\/Type \/Catalog/g)
+    const catalogdiff = pdf_doc_string.slice(catalogidx).search(/endobj/) + 6 
+    let catalogstring = pdf_doc_string.slice(catalogidx, catalogidx+catalogdiff)
+    if(catalogstring.includes("AcroForm")){
+        if (catalogstring.includes("Fields")){
+            catalogstring = catalogstring.replace("/Fields [", `/Fields [${lastIdx+2} 0 R `)
+        } else {
+            throw Error("Not sure what to do")
+        }
+        debugger
+    }else {
+        const sliceIndex = catalogstring.search(/Catalog\n/)+8
+        catalogstring = catalogstring.slice(0,sliceIndex) + `/AcroForm <<\n/Fields [${lastIdx+2} 0 R]\n/SigFlags 2\n>>` + catalogstring.slice(sliceIndex)
+    }
+    let pageMatches = [...pdf_doc_string.matchAll(/\d* 0 obj\n<<\n?\/Type \/Page[^s]{1}/g)]
+    pageMatches = pageMatches.map(match => match.index)
+    const pageidx = Math.max(...pageMatches)
+    const pagediff = pdf_doc_string.slice(pageidx).search(/endobj/) + 6 
+    let pageString = pdf_doc_string.slice(pageidx, pageidx+pagediff)
+    if(pageString.includes("Annots")){
+        pageString = pageString.replace("/Annots [", `/Annots [${lastIdx+2} 0 R `)
+    }else {
+        const sliceIndex = pageString.search("/Page\n") + 6 
+        pageString = pageString.slice(0,sliceIndex) + `/Annots [${lastIdx+2} 0 R]\n` + pageString.slice(sliceIndex)
+    }
+    
+    let prevmatches = pdf_doc_string.match(/\nstartxref\n\d*/g)
+    prevmatches = prevmatches.map(match => parseInt(match.replace("\nstartxref\n", "")))
+    const prev = Math.max(...prevmatches)
+    const SIGNATURE_LENGTH = 15000;
+    console.log(before, prev)
+    const append = `
 
-    // Salva o pdf e retorna o buffer
-    // @see https://github.com/Hopding/pdf-lib/issues/541
-    const pdfBytes = await loadedPdf.save({ useObjectStreams: false });
+${lastIdx +1} 0 obj
+<<
+/Type /Sig
+/Filter /Adobe.PPKLite
+/SubFilter /adbe.pkcs7.detached
+/ByteRange [0 /********** /********** /**********]
+/Contents <${'A'.repeat(SIGNATURE_LENGTH)}>
+/Reason (We need your signature for reasons...)
+/M (D:20230316130812Z)
+>>
+endobj
 
-    return unit8ToBuffer(pdfBytes);
+${lastIdx +2} 0 obj
+<<
+/Type /Annot
+/Subtype /Widget
+/FT /Sig
+/Rect [ 0 0 0 0 ]
+/T (test signature)
+/F 4
+/P 2 0 R
+/V ${lastIdx+1} 0 R
+>>
+endobj
+${catalogstring}
+${pageString}
+`
+    const bytes_appended_doc_string = Buffer.concat([pdf_doc, Buffer.from(append)]) 
+    const appended_doc_string = bytes_appended_doc_string.toString("ascii")
+    let foundPageMatches = [...appended_doc_string.matchAll(/\d* 0 obj\n<<\n?\/Type \/Page[^s]{1}/g)]
+    foundPageMatches = foundPageMatches.map(match => match.index)
+    const found_page_idx = Math.max(...foundPageMatches)
+
+    let foundCatalogMatches = [...appended_doc_string.matchAll(/\d* 0 obj\n<<\n?\/Type \/Catalog/g)]
+    foundCatalogMatches = foundCatalogMatches.map(match => match.index)
+    const found_catalog_idx = Math.max(...foundCatalogMatches)
+    // const found_catalog_idx = appended_doc_string.search(catalogstring.slice(0,45)) - 1 
+    // const found_page_idx = appended_doc_string.search(pageString.slice(0,30)) - 1
+    const buffer_idx = appended_doc_string.search("A".repeat(15000)) 
+    const xref = `
+xref
+${pdf_doc_string.slice(pageidx, pageidx+1)} 1
+${"0".repeat(10 - found_page_idx.toString().length)}${found_page_idx} 00000 n
+${pdf_doc_string.slice(catalogidx, catalogidx+1)} 1
+${"0".repeat(10 - found_catalog_idx.toString().length)}${found_catalog_idx} 00000 n
+
+${lastIdx +1} 2 
+${"0".repeat(10 - (buffer_idx-140).toString().length)}${buffer_idx-140} 00000 n 
+${"0".repeat(10 - (buffer_idx+15084).toString().length)}${buffer_idx+15084} 00000 n 
+
+trailer
+<<
+/Size ${lastIdx+2} /Prev ${prev}
+>>
+
+startxref
+`
+    debugger
+    const bytesXrefDocString = Buffer.concat([bytes_appended_doc_string, Buffer.from(xref)])
+    const xrefDocString = bytesXrefDocString.toString("ascii")
+    let matches = [...xrefDocString.matchAll(/\nxref/g)]
+    
+    matches = matches.map(match => match.index)
+    const lastxref = Math.max(...matches)
+    // Math.max(...matches)
+    let eof = `${lastxref}
+%%EOF`
+    pdf_doc = Buffer.concat([bytesXrefDocString ,Buffer.from(eof)])
+    console.log(typeof pdf_doc)
+    console.log(pdf_doc.length)
+    console.log(Buffer.from(pdf_doc).length)
+    return pdf_doc
   }
 
 export {sign, addPlaceholder, calculate_content_bytes};
