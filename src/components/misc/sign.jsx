@@ -1,12 +1,4 @@
-import {
-    PDFDocument,
-    PDFName,
-    PDFNumber,
-    PDFHexString,
-    PDFString,
-    PDFRef
-  } from "pdf-lib";
-import PDFArrayCustom from "./pdfArrayCustom";
+import { PDFDocument } from "pdf-lib";
 class SignPdfError extends Error{}
 
 
