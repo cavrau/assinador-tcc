@@ -313,7 +313,7 @@ async function addPlaceholder(pdf_doc) {
     let catalogstring = pdf_doc_string.slice(catalogidx, catalogidx+catalogdiff)
     if(catalogstring.includes("AcroForm")){
         if (catalogstring.includes("Fields")){
-            catalogstring = catalogstring.replace("/Fields [", `/Fields [${lastIdx+2} 0 R `)
+            catalogstring = catalogstring.replace("0 R]", `0 R ${lastIdx+2} 0 R]`)
         } else {
             throw Error("Not sure what to do")
         }
@@ -359,7 +359,7 @@ ${lastIdx +2} 0 obj
 /Subtype /Widget
 /FT /Sig
 /Rect [ 0 0 0 0 ]
-/T (test signature)
+/T (test signature ${lastIdx})
 /F 4
 /P 2 0 R
 /V ${lastIdx+1} 0 R
@@ -382,18 +382,18 @@ ${pageString}
     const buffer_idx = appended_doc_string.search("A".repeat(15000)) 
     const xref = `
 xref
+0 1
+0000000000 65535 f
 ${pdf_doc_string.slice(pageidx, pageidx+1)} 1
 ${"0".repeat(10 - found_page_idx.toString().length)}${found_page_idx} 00000 n
 ${pdf_doc_string.slice(catalogidx, catalogidx+1)} 1
 ${"0".repeat(10 - found_catalog_idx.toString().length)}${found_catalog_idx} 00000 n
-
-${lastIdx +1} 2 
+${lastIdx +1} 2
 ${"0".repeat(10 - (buffer_idx-140).toString().length)}${buffer_idx-140} 00000 n 
 ${"0".repeat(10 - (buffer_idx+15084).toString().length)}${buffer_idx+15084} 00000 n 
-
 trailer
 <<
-/Size ${lastIdx+2} /Prev ${prev}
+/Size ${lastIdx+2} /Prev ${prev} /Root ${pdf_doc_string.slice(catalogidx, catalogidx+1)} 0 R
 >>
 
 startxref
